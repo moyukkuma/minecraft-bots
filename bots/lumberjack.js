@@ -1,4 +1,5 @@
 const { pathfinder, Movements, goals: { GoalBlock } } = require('mineflayer-pathfinder');
+const Vec3 = require('vec3');
 const BaseBot = require('./base-bot');
 const logger = require('../utils/logger');
 
@@ -20,12 +21,13 @@ class LumberjackBot extends BaseBot {
 
   onSpawn() {
     this.bot.loadPlugin(pathfinder);
-    const mcData = require('minecraft-data')(this.bot.version);
-    this._movements = new Movements(this.bot, mcData);
+    this.mcData = require('minecraft-data')(this.bot.version);
+    this._movements = new Movements(this.bot);
     this.bot.pathfinder.setMovements(this._movements);
 
-    logger.info(this.jobName, '準備完了。!start で作業を開始します。');
-    this.bot.chat('木こりBotが起動しました！ !start で作業開始');
+    logger.info(this.jobName, '準備完了。自動で作業を開始します。');
+    this.bot.chat('木こりBotが起動しました！自動で作業を開始します。');
+    this.startJob();
   }
 
   startJob() {
@@ -83,7 +85,7 @@ class LumberjackBot extends BaseBot {
   }
 
   _findNearestLog() {
-    const mcData = require('minecraft-data')(this.bot.version);
+    const mcData = this.mcData;
     let nearest = null;
     let minDist = Infinity;
 
@@ -146,7 +148,7 @@ class LumberjackBot extends BaseBot {
     let y = startY;
 
     while (y < startY + 20) {
-      const block = this.bot.blockAt({ x, y, z });
+      const block = this.bot.blockAt(new Vec3(x, y, z));
       if (!block || block.name !== logName) break;
       logs.push(block);
       y++;
