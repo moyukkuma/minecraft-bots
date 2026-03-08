@@ -8,8 +8,9 @@ const JOBS = {
   // combat:     './bots/combat',
 };
 
-const jobArg = process.argv[2] || 'lumberjack';
-const jobPath = JOBS[jobArg];
+const jobArg   = process.argv[2] || 'lumberjack';
+const countArg = parseInt(process.argv[3]) || 1;
+const jobPath  = JOBS[jobArg];
 
 if (!jobPath) {
   logger.error('index', `不明な職業: "${jobArg}"`);
@@ -17,8 +18,25 @@ if (!jobPath) {
   process.exit(1);
 }
 
-logger.info('index', `職業 "${jobArg}" で起動します...`);
+if (countArg < 1 || countArg > 20) {
+  logger.error('index', `人数は 1〜20 の範囲で指定してください`);
+  process.exit(1);
+}
+
+logger.info('index', `職業 "${jobArg}" で ${countArg}人 起動します...`);
 
 const BotClass = require(jobPath);
-const bot = new BotClass();
-bot.connect();
+const config   = require('./config');
+
+for (let i = 0; i < countArg; i++) {
+  const username = countArg === 1
+    ? config.username
+    : `${config.username}_${i + 1}`;
+
+  // 同時接続によるキックを防ぐため、1秒ずつずらして接続
+  setTimeout(() => {
+    logger.info('index', `Bot 起動: ${username}`);
+    const bot = new BotClass();
+    bot.connect({ username });
+  }, i * 1000);
+}
