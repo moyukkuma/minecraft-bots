@@ -17,6 +17,13 @@ const SEARCH_RADIUS = 32;
 const RETRY_DELAY_MS = 30000;
 const INVENTORY_FULL_THRESHOLD = 36; // インベントリスロット数
 
+// 足場として使えるブロック（優先順）
+const SCAFFOLD_NAMES = [
+  'dirt', 'cobblestone', 'stone', 'gravel',
+  'oak_planks', 'spruce_planks', 'birch_planks',
+  'jungle_planks', 'acacia_planks', 'dark_oak_planks',
+];
+
 // 同プロセス内の全Botで共有するクレーム済み木セット（X,Z で識別）
 const claimedTrees = new Set();
 
@@ -168,10 +175,18 @@ class LumberjackBot extends BaseBot {
       const eyePos = this.bot.entity.position.offset(0, 1.62, 0);
       const reachDist = eyePos.distanceTo(log.position.offset(0.5, 0.5, 0.5));
       if (reachDist > 4.5) {
-        // リーチ外なら隣に移動して登る（土など軟らかいブロックを掘って高さを合わせる）
+        // まず pathfinder で近づく
         await this._moveTo(log.position.x, log.position.y, log.position.z);
         this.bot.pathfinder.setGoal(null);
-        await this._equipAxe(); // 移動中にツールが切り替わるため再装備
+
+        // まだリーチ外なら足場を積んで登る
+        const eyePos2 = this.bot.entity.position.offset(0, 1.62, 0);
+        const reachDist2 = eyePos2.distanceTo(log.position.offset(0.5, 0.5, 0.5));
+        if (reachDist2 > 4.5) {
+          await this._pillarUp(log.position.y);
+        }
+
+        await this._equipAxe();
       }
 
       // ブロックを向いてから掘る
@@ -245,6 +260,41 @@ class LumberjackBot extends BaseBot {
       this.bot.once('goal_reached', onGoalReached);
       this.bot.on('path_update', onPathUpdate);
     });
+  }
+
+  async _pillarUp(targetY) {
+    // 足元Y がターゲットのリーチ内に入るまでブロックを積み上げて登る
+    while (this.bot.entity.position.y < targetY - 3) {
+      const scaffoldItem = SCAFFOLD_NAMES
+        .map(n => this.bot.inventory.items().find(i => i.name === n))
+        .find(Boolean);
+
+      if (!scaffoldItem) {
+        logger.warn(this.jobName, '足場ブロックなし - ピラー登りを中断');
+        return;
+      }
+
+      await this.bot.equip(scaffoldItem, 'hand');
+
+      // 真下を向く
+      await this.bot.look(this.bot.entity.yaw, Math.PI / 2, true);
+
+      // 足元のブロックを取得
+      const below = this.bot.blockAt(
+        this.bot.entity.position.floored().offset(0, -1, 0)
+      );
+      if (!below) return;
+
+      // ジャンプしながら足元にブロックを設置
+      this.bot.setControlState('jump', true);
+      await new Promise(r => setTimeout(r, 250));
+      try {
+        await this.bot.placeBlock(below, new Vec3(0, 1, 0));
+        logger.debug(this.jobName, `足場設置: Y=${Math.floor(this.bot.entity.position.y)}`);
+      } catch (_) {}
+      this.bot.setControlState('jump', false);
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
 
   async _equipAxe() {
