@@ -112,18 +112,24 @@ class LumberjackBot extends BaseBot {
   }
 
   async _chopTree(rootBlock) {
-    // 木の根元を特定（同じX・Z座標で最も低いY）
     const { x, z } = rootBlock.position;
-    let logsToChop = this._getTreeLogs(x, rootBlock.position.y, z, rootBlock.name);
+    const logName = rootBlock.name;
+
+    // 同じX・Z列で最も低いYを根元とする
+    let rootY = rootBlock.position.y;
+    while (rootY > 0) {
+      const below = this.bot.blockAt(new Vec3(x, rootY - 1, z));
+      if (!below || below.name !== logName) break;
+      rootY--;
+    }
+
+    let logsToChop = this._getTreeLogs(x, rootY, z, logName);
 
     if (logsToChop.length === 0) {
       logsToChop = [rootBlock];
     }
 
     logger.info(this.jobName, `木を発見 (${logsToChop.length}ブロック) → 伐採開始`);
-
-    // 根元から上へ順に伐採
-    logsToChop.sort((a, b) => a.position.y - b.position.y);
 
     for (const log of logsToChop) {
       if (!this.running) break;
@@ -158,7 +164,7 @@ class LumberjackBot extends BaseBot {
   }
 
   async _moveTo(x, y, z) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const goal = new GoalBlock(x, y, z);
       this.bot.pathfinder.setGoal(goal);
 
@@ -166,24 +172,20 @@ class LumberjackBot extends BaseBot {
         cleanup();
         resolve();
       };
-      const onPathStopped = () => {
-        cleanup();
-        resolve(); // 到達できなくても続行
-      };
-      const onError = (err) => {
-        cleanup();
-        reject(err);
+      const onPathUpdate = (result) => {
+        if (result.status === 'noPath' || result.status === 'timeout') {
+          cleanup();
+          resolve(); // 到達できなくても続行
+        }
       };
 
       const cleanup = () => {
-        this.bot.pathfinder.removeListener('goal_reached', onGoalReached);
-        this.bot.pathfinder.removeListener('path_stopped', onPathStopped);
-        this.bot.pathfinder.removeListener('error', onError);
+        this.bot.removeListener('goal_reached', onGoalReached);
+        this.bot.removeListener('path_update', onPathUpdate);
       };
 
-      this.bot.pathfinder.once('goal_reached', onGoalReached);
-      this.bot.pathfinder.once('path_stopped', onPathStopped);
-      this.bot.pathfinder.once('error', onError);
+      this.bot.once('goal_reached', onGoalReached);
+      this.bot.on('path_update', onPathUpdate);
     });
   }
 
