@@ -17,8 +17,9 @@ const SEARCH_RADIUS = 32;
 const RETRY_DELAY_MS = 30000;
 const INVENTORY_FULL_THRESHOLD = 36; // インベントリスロット数
 
-// 足場として使えるブロック（優先順）
+// 足場として使えるブロック（原木を優先 → フォールバックで土・石など）
 const SCAFFOLD_NAMES = [
+  'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log',
   'dirt', 'cobblestone', 'stone', 'gravel',
   'oak_planks', 'spruce_planks', 'birch_planks',
   'jungle_planks', 'acacia_planks', 'dark_oak_planks',
@@ -32,6 +33,7 @@ class LumberjackBot extends BaseBot {
     super('LumberjackBot');
     this.chopCount = 0;
     this._loopTimer = null;
+    this._placedScaffold = []; // _pillarUp で設置した足場ブロックの座標
   }
 
   onSpawn() {
@@ -204,6 +206,8 @@ class LumberjackBot extends BaseBot {
       }
     }
 
+    // 積み上げた足場を撤去してから予約を解放
+    await this._removePillar();
     claimedTrees.delete(treeKey); // 予約を解放
     this.chopCount++;
     logger.info(this.jobName, `伐採完了 (合計: ${this.chopCount}本)`);
@@ -290,11 +294,35 @@ class LumberjackBot extends BaseBot {
       await new Promise(r => setTimeout(r, 250));
       try {
         await this.bot.placeBlock(below, new Vec3(0, 1, 0));
+        // 設置した座標を記録（後で _removePillar で撤去する）
+        this._placedScaffold.push(below.position.offset(0, 1, 0).clone());
         logger.debug(this.jobName, `足場設置: Y=${Math.floor(this.bot.entity.position.y)}`);
       } catch (_) {}
       this.bot.setControlState('jump', false);
       await new Promise(r => setTimeout(r, 500));
     }
+  }
+
+  async _removePillar() {
+    if (this._placedScaffold.length === 0) return;
+    logger.debug(this.jobName, `足場撤去開始: ${this._placedScaffold.length}ブロック`);
+
+    // 高い順（上から）に掘って落下しながら回収
+    const sorted = [...this._placedScaffold].sort((a, b) => b.y - a.y);
+    for (const pos of sorted) {
+      const block = this.bot.blockAt(pos);
+      if (!block || block.name === 'air') continue;
+      try {
+        await this.bot.lookAt(pos.offset(0.5, 0.5, 0.5));
+        await this.bot.dig(block);
+        logger.debug(this.jobName, `足場撤去: Y=${pos.y}`);
+      } catch (err) {
+        logger.debug(this.jobName, `足場撤去失敗（スキップ）: ${err.message}`);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    this._placedScaffold = [];
   }
 
   async _equipAxe() {
