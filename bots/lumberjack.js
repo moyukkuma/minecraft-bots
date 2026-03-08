@@ -31,7 +31,7 @@ class LumberjackBot extends BaseBot {
     this.bot.loadPlugin(pathfinder);
     this.mcData = require('minecraft-data')(this.bot.version);
     this._movements = new Movements(this.bot);
-    this._movements.canDig = false; // 移動中に葉などを自動掘削してインベントリが切り替わるのを防ぐ
+    this._movements.canDig = true; // 土など軟らかいブロックを掘って登れるようにする
     this.bot.pathfinder.setMovements(this._movements);
 
     logger.info(this.jobName, '準備完了。自動で作業を開始します。');
@@ -155,28 +155,29 @@ class LumberjackBot extends BaseBot {
     // まず根元に近づく
     await this._moveTo(x, rootY, z);
     this.bot.pathfinder.setGoal(null);
-
-    // 現在地から届く最大Y（足元 + 眼の高さ1.62 + リーチ4ブロック）
-    // 上へ登ると落下リスクがあるため、地面から届く範囲のみ掘る
-    const maxReachY = Math.floor(this.bot.entity.position.y + 1.62 + 4);
+    await this._equipAxe(); // 移動中に土等を掘った場合に備えて再装備
 
     for (const log of logsToChop) {
       if (!this.running) break;
-
-      // 届かない高さのログはスキップ（高所への移動・落下を防止）
-      if (log.position.y > maxReachY) {
-        logger.debug(this.jobName, `リーチ外のためスキップ: Y=${log.position.y} (上限Y=${maxReachY})`);
-        continue;
-      }
 
       // 最新のブロック状態を確認（すでに壊れていたらスキップ）
       const current = this.bot.blockAt(log.position);
       if (!current || !LOG_TYPES.includes(current.name)) continue;
 
+      // 眼の位置からブロック中心までの距離でリーチ判定（4.5ブロック）
+      const eyePos = this.bot.entity.position.offset(0, 1.62, 0);
+      const reachDist = eyePos.distanceTo(log.position.offset(0.5, 0.5, 0.5));
+      if (reachDist > 4.5) {
+        // リーチ外なら隣に移動して登る（土など軟らかいブロックを掘って高さを合わせる）
+        await this._moveTo(log.position.x, log.position.y, log.position.z);
+        this.bot.pathfinder.setGoal(null);
+        await this._equipAxe(); // 移動中にツールが切り替わるため再装備
+      }
+
       // ブロックを向いてから掘る
       await this.bot.lookAt(log.position.offset(0.5, 0.5, 0.5));
 
-      // 再取得（lookAt中に壊れた可能性）
+      // 再取得（移動中に壊れた可能性）
       const fresh = this.bot.blockAt(log.position);
       if (!fresh || !LOG_TYPES.includes(fresh.name)) continue;
 
