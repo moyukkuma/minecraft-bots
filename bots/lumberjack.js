@@ -28,6 +28,7 @@ class LumberjackBot extends BaseBot {
     this.bot.loadPlugin(pathfinder);
     this.mcData = require('minecraft-data')(this.bot.version);
     this._movements = new Movements(this.bot);
+    this._movements.canDig = false; // 移動中に葉などを自動掘削してインベントリが切り替わるのを防ぐ
     this.bot.pathfinder.setMovements(this._movements);
 
     logger.info(this.jobName, '準備完了。自動で作業を開始します。');
@@ -154,6 +155,7 @@ class LumberjackBot extends BaseBot {
       if (dist > 4) {
         await this._moveTo(log.position.x, log.position.y, log.position.z);
         this.bot.pathfinder.setGoal(null);
+        await this._equipAxe(); // 移動後に斧を再装備
       }
 
       // ブロックを向いてから掘る
@@ -215,16 +217,19 @@ class LumberjackBot extends BaseBot {
     });
   }
 
-  _equipAxe() {
+  async _equipAxe() {
     const axe = AXE_PRIORITY
       .map(name => this.bot.inventory.items().find(i => i.name === name))
       .find(Boolean);
     if (!axe) return;
     const held = this.bot.heldItem;
     if (held && held.name === axe.name) return;
-    this.bot.equip(axe, 'hand').then(() => {
+    try {
+      await this.bot.equip(axe, 'hand');
       logger.info(this.jobName, `斧を装備: ${axe.name}`);
-    }).catch(() => {});
+    } catch (err) {
+      logger.debug(this.jobName, `斧の装備失敗: ${err.message}`);
+    }
   }
 
   async _collectDrops() {
