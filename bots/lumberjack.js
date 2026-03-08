@@ -156,26 +156,27 @@ class LumberjackBot extends BaseBot {
     await this._moveTo(x, rootY, z);
     this.bot.pathfinder.setGoal(null);
 
+    // 現在地から届く最大Y（足元 + 眼の高さ1.62 + リーチ4ブロック）
+    // 上へ登ると落下リスクがあるため、地面から届く範囲のみ掘る
+    const maxReachY = Math.floor(this.bot.entity.position.y + 1.62 + 4);
+
     for (const log of logsToChop) {
       if (!this.running) break;
+
+      // 届かない高さのログはスキップ（高所への移動・落下を防止）
+      if (log.position.y > maxReachY) {
+        logger.debug(this.jobName, `リーチ外のためスキップ: Y=${log.position.y} (上限Y=${maxReachY})`);
+        continue;
+      }
 
       // 最新のブロック状態を確認（すでに壊れていたらスキップ）
       const current = this.bot.blockAt(log.position);
       if (!current || !LOG_TYPES.includes(current.name)) continue;
 
-      // リーチ外（4ブロック超）なら近づき直す
-      // 下のログを掘った後にスペースができているので上へ登れる
-      const dist = this.bot.entity.position.distanceTo(log.position);
-      if (dist > 4) {
-        await this._moveTo(log.position.x, log.position.y, log.position.z);
-        this.bot.pathfinder.setGoal(null);
-        await this._equipAxe(); // 移動後に斧を再装備
-      }
-
       // ブロックを向いてから掘る
       await this.bot.lookAt(log.position.offset(0.5, 0.5, 0.5));
 
-      // 再取得（移動中に壊れた可能性）
+      // 再取得（lookAt中に壊れた可能性）
       const fresh = this.bot.blockAt(log.position);
       if (!fresh || !LOG_TYPES.includes(fresh.name)) continue;
 
@@ -206,17 +207,27 @@ class LumberjackBot extends BaseBot {
     return logs;
   }
 
-  async _moveTo(x, y, z) {
+  async _moveTo(x, y, z, timeoutMs = 10000) {
     return new Promise((resolve) => {
       const goal = new GoalNear(x, y, z, 2); // ブロックから2マス以内に近づく
       this.bot.pathfinder.setGoal(goal);
 
+      // タイムアウト：経路探索が詰まってもkeepaliveタイムアウト(30s)より前に解放
+      const timer = setTimeout(() => {
+        cleanup();
+        this.bot.pathfinder.setGoal(null);
+        logger.debug(this.jobName, `移動タイムアウト (${timeoutMs}ms)`);
+        resolve();
+      }, timeoutMs);
+
       const onGoalReached = () => {
+        clearTimeout(timer);
         cleanup();
         resolve();
       };
       const onPathUpdate = (result) => {
         if (result.status === 'noPath' || result.status === 'timeout') {
+          clearTimeout(timer);
           cleanup();
           resolve(); // 到達できなくても続行
         }
