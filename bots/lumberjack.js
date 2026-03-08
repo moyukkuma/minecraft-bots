@@ -17,6 +17,9 @@ const SEARCH_RADIUS = 32;
 const RETRY_DELAY_MS = 30000;
 const INVENTORY_FULL_THRESHOLD = 36; // インベントリスロット数
 
+// 同プロセス内の全Botで共有するクレーム済み木セット（X,Z で識別）
+const claimedTrees = new Set();
+
 class LumberjackBot extends BaseBot {
   constructor() {
     super('LumberjackBot');
@@ -83,6 +86,9 @@ class LumberjackBot extends BaseBot {
       await this._collectDrops();
     } catch (err) {
       logger.error(this.jobName, `伐採中にエラーが発生しました: ${err.message}`);
+      // エラー時も予約を解放する
+      const pos = tree.position;
+      claimedTrees.delete(`${pos.x},${pos.z}`);
     }
 
     if (this.running) {
@@ -107,6 +113,9 @@ class LumberjackBot extends BaseBot {
       });
 
       for (const pos of blocks) {
+        // 他のBotがすでに担当している木はスキップ
+        if (claimedTrees.has(`${pos.x},${pos.z}`)) continue;
+
         const dist = this.bot.entity.position.distanceTo(pos);
         if (dist < minDist) {
           minDist = dist;
@@ -132,6 +141,11 @@ class LumberjackBot extends BaseBot {
 
     let logsToChop = this._getTreeLogs(x, rootY, z, logName);
     if (logsToChop.length === 0) logsToChop = [rootBlock];
+
+    // この木を予約（他のBotに取られないよう）
+    const treeKey = `${x},${z}`;
+    if (claimedTrees.has(treeKey)) return; // 予約済みならスキップ
+    claimedTrees.add(treeKey);
 
     logger.info(this.jobName, `木を発見 (${logsToChop.length}ブロック) → 伐採開始`);
 
@@ -173,6 +187,7 @@ class LumberjackBot extends BaseBot {
       }
     }
 
+    claimedTrees.delete(treeKey); // 予約を解放
     this.chopCount++;
     logger.info(this.jobName, `伐採完了 (合計: ${this.chopCount}本)`);
   }
