@@ -8,6 +8,11 @@ const LOG_TYPES = [
   'jungle_log', 'acacia_log', 'dark_oak_log',
 ];
 
+const AXE_PRIORITY = [
+  'netherite_axe', 'diamond_axe', 'iron_axe',
+  'golden_axe', 'stone_axe', 'wooden_axe',
+];
+
 const SEARCH_RADIUS = 32;
 const RETRY_DELAY_MS = 30000;
 const INVENTORY_FULL_THRESHOLD = 36; // インベントリスロット数
@@ -27,6 +32,7 @@ class LumberjackBot extends BaseBot {
 
     logger.info(this.jobName, '準備完了。自動で作業を開始します。');
     this.bot.chat('木こりBotが起動しました！自動で作業を開始します。');
+    this._equipAxe();
     this.startJob();
   }
 
@@ -128,6 +134,9 @@ class LumberjackBot extends BaseBot {
 
     logger.info(this.jobName, `木を発見 (${logsToChop.length}ブロック) → 伐採開始`);
 
+    // 伐採前に斧を装備
+    await this._equipAxe();
+
     // まず根元に近づく
     await this._moveTo(x, rootY, z);
     this.bot.pathfinder.setGoal(null);
@@ -206,9 +215,33 @@ class LumberjackBot extends BaseBot {
     });
   }
 
+  _equipAxe() {
+    const axe = AXE_PRIORITY
+      .map(name => this.bot.inventory.items().find(i => i.name === name))
+      .find(Boolean);
+    if (!axe) return;
+    const held = this.bot.heldItem;
+    if (held && held.name === axe.name) return;
+    this.bot.equip(axe, 'hand').then(() => {
+      logger.info(this.jobName, `斧を装備: ${axe.name}`);
+    }).catch(() => {});
+  }
+
   async _collectDrops() {
-    // 周囲のドロップアイテムを拾う（近づくだけで自動回収）
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // ドロップアイテムが生成されるまで少し待機
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // 近くのドロップアイテムを順番に回収
+    for (let i = 0; i < 20; i++) {
+      const drop = this.bot.nearestEntity(
+        e => e.name === 'item' &&
+             this.bot.entity.position.distanceTo(e.position) < 16
+      );
+      if (!drop) break;
+
+      await this._moveTo(drop.position.x, drop.position.y, drop.position.z);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
   }
 }
 
