@@ -124,29 +124,39 @@ class LumberjackBot extends BaseBot {
     }
 
     let logsToChop = this._getTreeLogs(x, rootY, z, logName);
-
-    if (logsToChop.length === 0) {
-      logsToChop = [rootBlock];
-    }
+    if (logsToChop.length === 0) logsToChop = [rootBlock];
 
     logger.info(this.jobName, `木を発見 (${logsToChop.length}ブロック) → 伐採開始`);
+
+    // まず根元に近づく
+    await this._moveTo(x, rootY, z);
+    this.bot.pathfinder.setGoal(null);
 
     for (const log of logsToChop) {
       if (!this.running) break;
 
-      // 木に近づく（リーチ内に入ればOK）
-      await this._moveTo(log.position.x, log.position.y, log.position.z);
-
-      // 移動を止めてから掘る
-      this.bot.pathfinder.setGoal(null);
-
-      // 最新のブロック状態を取得（すでに壊れていたらスキップ）
+      // 最新のブロック状態を確認（すでに壊れていたらスキップ）
       const current = this.bot.blockAt(log.position);
       if (!current || !LOG_TYPES.includes(current.name)) continue;
 
+      // リーチ外（4ブロック超）なら近づき直す
+      // 下のログを掘った後にスペースができているので上へ登れる
+      const dist = this.bot.entity.position.distanceTo(log.position);
+      if (dist > 4) {
+        await this._moveTo(log.position.x, log.position.y, log.position.z);
+        this.bot.pathfinder.setGoal(null);
+      }
+
+      // ブロックを向いてから掘る
+      await this.bot.lookAt(log.position.offset(0.5, 0.5, 0.5));
+
+      // 再取得（移動中に壊れた可能性）
+      const fresh = this.bot.blockAt(log.position);
+      if (!fresh || !LOG_TYPES.includes(fresh.name)) continue;
+
       try {
-        await this.bot.dig(current);
-        logger.debug(this.jobName, `掘削: ${current.name} @ ${JSON.stringify(log.position)}`);
+        await this.bot.dig(fresh);
+        logger.debug(this.jobName, `掘削: ${fresh.name} @ ${JSON.stringify(log.position)}`);
       } catch (err) {
         logger.debug(this.jobName, `掘削失敗（スキップ）: ${err.message}`);
       }
