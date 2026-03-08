@@ -214,9 +214,12 @@ class LumberjackBot extends BaseBot {
       this.bot.pathfinder.setGoal(goal);
 
       // タイムアウト：経路探索が詰まってもkeepaliveタイムアウト(30s)より前に解放
+      // 切断・再接続中にタイマーが発火した場合も安全に処理する
       const timer = setTimeout(() => {
         cleanup();
-        this.bot.pathfinder.setGoal(null);
+        if (this.bot && this.bot.pathfinder) {
+          this.bot.pathfinder.setGoal(null);
+        }
         logger.debug(this.jobName, `移動タイムアウト (${timeoutMs}ms)`);
         resolve();
       }, timeoutMs);
