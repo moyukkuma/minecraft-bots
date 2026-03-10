@@ -25,6 +25,13 @@ const SCAFFOLD_NAMES = [
   'jungle_planks', 'acacia_planks', 'dark_oak_planks',
 ];
 
+// チェストに預けるアイテム（原木・苗・りんご）
+const STORE_ITEM_NAMES = [
+  'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log',
+  'oak_sapling', 'birch_sapling', 'spruce_sapling', 'jungle_sapling', 'acacia_sapling', 'dark_oak_sapling',
+  'apple',
+];
+
 // 同プロセス内の全Botで共有するクレーム済み木セット（X,Z で識別）
 const claimedTrees = new Set();
 
@@ -73,13 +80,17 @@ class LumberjackBot extends BaseBot {
   async _chopLoop() {
     if (!this.running) return;
 
-    // インベントリ満杯チェック
+    // インベントリ満杯チェック → チェストに預けて空きを作る
     const usedSlots = this.bot.inventory.items().length;
     if (usedSlots >= INVENTORY_FULL_THRESHOLD) {
-      logger.warn(this.jobName, 'インベントリが満杯です。作業を一時停止します。');
-      this.bot.chat('インベントリが満杯です！アイテムを整理してから !start で再開してください。');
-      this.running = false;
-      return;
+      logger.warn(this.jobName, 'インベントリが満杯です。チェストに預けます。');
+      await this._depositToChest();
+      // 預けても満杯なら停止
+      if (this.bot.inventory.items().length >= INVENTORY_FULL_THRESHOLD) {
+        this.bot.chat('インベントリが満杯です！アイテムを整理してから !start で再開してください。');
+        this.running = false;
+        return;
+      }
     }
 
     const tree = this._findNearestLog();
@@ -93,6 +104,7 @@ class LumberjackBot extends BaseBot {
     try {
       await this._chopTree(tree);
       await this._collectDrops();
+      await this._depositToChest();
     } catch (err) {
       logger.error(this.jobName, `伐採中にエラーが発生しました: ${err.message}`);
       // エラー時も予約を解放する
@@ -326,10 +338,20 @@ class LumberjackBot extends BaseBot {
   }
 
   async _equipAxe() {
-    const axe = AXE_PRIORITY
+    let axe = AXE_PRIORITY
       .map(name => this.bot.inventory.items().find(i => i.name === name))
       .find(Boolean);
-    if (!axe) return;
+
+    if (!axe) {
+      // インベントリに斧がない → チェストから取り出す
+      logger.info(this.jobName, '斧が見つかりません。チェストから取り出します。');
+      await this._retrieveAxeFromChest();
+      axe = AXE_PRIORITY
+        .map(name => this.bot.inventory.items().find(i => i.name === name))
+        .find(Boolean);
+      if (!axe) return; // チェストにもなければ諦める
+    }
+
     const held = this.bot.heldItem;
     if (held && held.name === axe.name) return;
     try {
@@ -354,6 +376,85 @@ class LumberjackBot extends BaseBot {
 
       await this._moveTo(drop.position.x, drop.position.y, drop.position.z);
       await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
+  _findNearestChest() {
+    const ids = ['chest', 'trapped_chest']
+      .map(n => this.mcData.blocksByName[n])
+      .filter(Boolean)
+      .map(b => b.id);
+    if (ids.length === 0) return null;
+
+    const positions = this.bot.findBlocks({ matching: ids, maxDistance: 32, count: 1 });
+    if (positions.length === 0) return null;
+    return this.bot.blockAt(positions[0]);
+  }
+
+  async _depositToChest() {
+    const chestBlock = this._findNearestChest();
+    if (!chestBlock) {
+      logger.warn(this.jobName, 'チェストが見つかりません（預け先なし）');
+      return;
+    }
+
+    await this._moveTo(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z);
+
+    let chest;
+    try {
+      chest = await this.bot.openChest(chestBlock);
+    } catch (err) {
+      logger.warn(this.jobName, `チェストを開けませんでした: ${err.message}`);
+      return;
+    }
+
+    try {
+      for (const itemName of STORE_ITEM_NAMES) {
+        const item = this.bot.inventory.items().find(i => i.name === itemName);
+        if (!item) continue;
+        try {
+          await chest.deposit(item.type, null, item.count);
+          logger.info(this.jobName, `チェストに預けた: ${item.name} x${item.count}`);
+        } catch (err) {
+          logger.debug(this.jobName, `預け失敗（スキップ）: ${item.name} - ${err.message}`);
+        }
+      }
+    } finally {
+      chest.close();
+    }
+  }
+
+  async _retrieveAxeFromChest() {
+    const chestBlock = this._findNearestChest();
+    if (!chestBlock) {
+      logger.warn(this.jobName, 'チェストが見つかりません（斧取り出し失敗）');
+      return;
+    }
+
+    await this._moveTo(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z);
+
+    let chest;
+    try {
+      chest = await this.bot.openChest(chestBlock);
+    } catch (err) {
+      logger.warn(this.jobName, `チェストを開けませんでした: ${err.message}`);
+      return;
+    }
+
+    try {
+      for (const axeName of AXE_PRIORITY) {
+        const axeInChest = chest.containerItems().find(i => i.name === axeName);
+        if (!axeInChest) continue;
+        try {
+          await chest.withdraw(axeInChest.type, null, 1);
+          logger.info(this.jobName, `チェストから斧を取り出した: ${axeName}`);
+          break;
+        } catch (err) {
+          logger.debug(this.jobName, `斧取り出し失敗: ${axeName} - ${err.message}`);
+        }
+      }
+    } finally {
+      chest.close();
     }
   }
 }
