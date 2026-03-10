@@ -16,6 +16,7 @@ const AXE_PRIORITY = [
 const SEARCH_RADIUS = 32;
 const RETRY_DELAY_MS = 30000;
 const INVENTORY_FULL_THRESHOLD = 36; // インベントリスロット数
+const DEPOSIT_INTERVAL = 5;          // 何本切るごとにチェストへ預けるか
 
 // 足場として使えるブロック（原木を優先 → フォールバックで土・石など）
 const SCAFFOLD_NAMES = [
@@ -104,7 +105,10 @@ class LumberjackBot extends BaseBot {
     try {
       await this._chopTree(tree);
       await this._collectDrops();
-      await this._depositToChest();
+      // DEPOSIT_INTERVAL 本ごとにチェストへ預ける
+      if (this.chopCount % DEPOSIT_INTERVAL === 0) {
+        await this._depositToChest();
+      }
     } catch (err) {
       logger.error(this.jobName, `伐採中にエラーが発生しました: ${err.message}`);
       // エラー時も予約を解放する
